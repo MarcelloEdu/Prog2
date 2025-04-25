@@ -8,6 +8,42 @@
 
 int load_directory(FILE *archive, EntradaVC **table, int *num_members)
 {
+    if (!archive || !table || !num_members) {
+        fprintf(stderr, "Erro: parâmetros inválidos em load_directory.\n");
+        return -1;
+    }
+
+    // Vai até o final para ler os metadados
+    fseek(archive, -((long)sizeof(int) + sizeof(long)), SEEK_END);
+
+    // Lê o número de membros
+    int qtd;
+    fread(&qtd, sizeof(int), 1, archive);
+
+    // Lê o offset do início do diretório
+    long offset;
+    fread(&offset, sizeof(long), 1, archive);
+
+    // Vai até o início do diretório
+    fseek(archive, offset, SEEK_SET);
+
+    // Aloca a tabela e lê os membros
+    EntradaVC *tabela = malloc(qtd * sizeof(EntradaVC));
+    if (!tabela) {
+        perror("Erro ao alocar memória para tabela");
+        return -1;
+    }
+
+    size_t lidos = fread(tabela, sizeof(EntradaVC), qtd, archive);
+    if (lidos != (size_t)qtd) {
+        fprintf(stderr, "Erro ao ler tabela do diretório.\n");
+        free(tabela);
+        return -1;
+    }
+
+    *table = tabela;
+    *num_members = qtd;
+    return 0;
 
 }
 
