@@ -13,14 +13,16 @@ typedef struct {
     int is_compressed;        // flag: 0 = plano, 1 = comprimido
 } EntradaVC;
 
-int insert_plan();
+//ponteiro duplo pois é uma lista de strings
+//const char para indicar que o nome do arquivo é apenas para leitura
+int insert_plan(const char *archive_name, char **members, int num_members);
 
-int insert_compressed();
+int insert_compressed(const char *archive_name, char **members, int num_members);
 
-void move_member();
+void move_member(const char *archive_name, const char *target, const char *member_to_move);
 
-int extract();
+int extract(const char *archive_name, char **members, int num_members);
 
-void remove();
+void remove(const char *archive_name, char **members, int num_members);
 
-void list_content();
+void list_content(const char *archive_name);
