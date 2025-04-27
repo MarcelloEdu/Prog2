@@ -1,9 +1,10 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include "lz.h"
+#ifndef VINA_H
+#define VINA_H
+
+#include <time.h>
 
 typedef struct {
-    char nome[1024];        // nome do arquivo
+    char nome[1025];        // nome do arquivo
     int uid;               // UID do arquivo
     int tamanho_original;
     int tamanho_em_disco; 
@@ -39,3 +40,5 @@ void remove_members(const char *archive_name, char **members, int num_members);
 
 // Lista as informações dos membros do archive no terminal
 void list_content(const char *archive_name);
+
+#endif
