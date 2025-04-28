@@ -164,14 +164,11 @@ int insert_plan(const char *archive_name, char **members, int num_members)
 }
 
 int insert_compressed(const char *archive_name, char **members, int num_members) {
-    /// trecho de código para abrir o arquivo
     FILE *archive = fopen(archive_name, "r+b");
     EntradaVC *tabela = NULL;
     int qtd = 0;
 
-    //tratamento de arquivo novo ou existente
     if (!archive) {
-        // Se não existe, cria novo
         archive = fopen(archive_name, "w+b");
         if (!archive) {
             perror("Erro ao abrir/criar archive");
@@ -182,17 +179,12 @@ int insert_compressed(const char *archive_name, char **members, int num_members)
             tabela = NULL;
             qtd = 0;
         }
-        // Trunca o final antigo (remove diretório)
-        //truncar significa remover o final do arquivo visando o tamanho
-        // do novo diretório
         fseek(archive, 0, SEEK_END);
         long final = ftell(archive);
         final -= (qtd * sizeof(EntradaVC)) + sizeof(int) + sizeof(long);
         ftruncate(fileno(archive), final);
     }
 
-    // 2. Para cada membro, insere no final do arquivo
-    // e tenta comprimir
     for (int i = 0; i < num_members; i++) {
         const char *nome_membro = members[i];
 
@@ -203,21 +195,21 @@ int insert_compressed(const char *archive_name, char **members, int num_members)
         }
 
         fseek(f, 0, SEEK_END);
-        unsigned int size_original = ftell(f);
+        long size_original_long = ftell(f);
         rewind(f);
 
-        if (size_original == 0) {
+        if (size_original_long == 0) {
             fprintf(stderr, "Arquivo %s vazio. Pulando.\n", nome_membro);
             fclose(f);
             continue;
         }
 
-        // Aloca buffers para compressão
+        unsigned int size_original = (unsigned int)size_original_long;
+
         unsigned char *buffer_original = malloc(size_original);
         unsigned char *buffer_comprimido = malloc(size_original * 2);
         unsigned int *work = malloc(sizeof(unsigned int) * (size_original / 2 + 1));
 
-        // Verifica se a alocação foi bem-sucedida
         if (!buffer_original || !buffer_comprimido || !work) {
             fprintf(stderr, "Erro de memória para arquivo %s.\n", nome_membro);
             if (buffer_original) free(buffer_original);
@@ -228,33 +220,15 @@ int insert_compressed(const char *archive_name, char **members, int num_members)
             return 1;
         }
 
-        // Lê o conteúdo do arquivo
-        // e armazena no buffer original
         fread(buffer_original, 1, size_original, f);
         fclose(f);
-
-        // DEBUGS IMPORTANTES:
-        printf("DEBUG: Tentando comprimir '%s'\n", nome_membro);
-        printf("DEBUG: size_original = %d\n", size_original);
-        printf("DEBUG: buffer_original = %p\n", (void *)buffer_original);
-        printf("DEBUG: buffer_comprimido = %p\n", (void *)buffer_comprimido);
-        printf("DEBUG: work = %p\n", (void *)work);
-
-
-        // Comprime o buffer original
-        // e armazena no buffer comprimido
-        /*PONTO DE ATENCAO*/
-        // NESSE TRECHO ESTA RETORNANDO SEGMENTATION FAULT
-        // O QUE PODE SER?
-        int tamanho_comprimido = LZ_CompressFast(buffer_original, buffer_comprimido, size_original, work);
-
-        free(work); // área de trabalho não é mais necessária
 
         struct stat s;
         if (stat(nome_membro, &s) != 0) {
             perror("Erro no stat");
             free(buffer_original);
             free(buffer_comprimido);
+            free(work);
             fclose(archive);
             return 1;
         }
@@ -270,27 +244,40 @@ int insert_compressed(const char *archive_name, char **members, int num_members)
         entrada.ordem = qtd;
         entrada.offset = offset;
 
-        if (tamanho_comprimido > 0 && tamanho_comprimido < (int)size_original) { // se compressão for eficaz
-            // Escreve o buffer comprimido no arquivo
-            fwrite(buffer_comprimido, 1, tamanho_comprimido, archive);
-            entrada.is_compressed = 1;
-            entrada.tamanho_original = (int)size_original;
-            entrada.tamanho_em_disco = tamanho_comprimido;
-            printf("Arquivo %s armazenado comprimido (%d bytes).\n", nome_membro, tamanho_comprimido);
-        } else { // se compressão ineficaz
-            // Escreve o buffer original no arquivo
-            // e atualiza os metadados
+        if (size_original < 16) {
+            printf("Arquivo %s muito pequeno para compressão (%u bytes). Armazenando plano.\n", nome_membro, size_original);
             fwrite(buffer_original, 1, size_original, archive);
             entrada.is_compressed = 0;
-            entrada.tamanho_original = (int)size_original;
-            entrada.tamanho_em_disco = (int)size_original;
-            printf("Compressão ineficaz, armazenando %s sem compressão (%d bytes).\n", nome_membro, size_original);
+            entrada.tamanho_original = size_original;
+            entrada.tamanho_em_disco = size_original;
+        } else {
+            printf("DEBUG: Tentando comprimir '%s'\n", nome_membro);
+            printf("DEBUG: size_original = %u\n", size_original);
+            printf("DEBUG: buffer_original = %p\n", (void *)buffer_original);
+            printf("DEBUG: buffer_comprimido = %p\n", (void *)buffer_comprimido);
+            printf("DEBUG: work = %p\n", (void *)work);
+
+            int tamanho_comprimido = LZ_CompressFast(buffer_original, buffer_comprimido, size_original, work);
+
+            if (tamanho_comprimido > 0 && tamanho_comprimido < (int)size_original) {
+                fwrite(buffer_comprimido, 1, tamanho_comprimido, archive);
+                entrada.is_compressed = 1;
+                entrada.tamanho_original = size_original;
+                entrada.tamanho_em_disco = tamanho_comprimido;
+                printf("Arquivo %s armazenado comprimido (%d bytes).\n", nome_membro, tamanho_comprimido);
+            } else {
+                fwrite(buffer_original, 1, size_original, archive);
+                entrada.is_compressed = 0;
+                entrada.tamanho_original = size_original;
+                entrada.tamanho_em_disco = size_original;
+                printf("Compressão ineficaz, armazenando %s sem compressão (%u bytes).\n", nome_membro, size_original);
+            }
         }
 
         free(buffer_original);
         free(buffer_comprimido);
+        free(work);
 
-        // Atualiza ou adiciona no diretório
         int idx = encontrar_membro(tabela, qtd, nome_membro);
         if (idx == -1) {
             tabela = realloc(tabela, (qtd + 1) * sizeof(EntradaVC));
@@ -313,17 +300,17 @@ int insert_compressed(const char *archive_name, char **members, int num_members)
 
 void move_member(const char *archive_name, const char *target, const char *member_to_move)
 {
-
+    return;
 }
 
 int extract(const char *archive_name, char **members, int num_members)
 {
-
+    return 0;
 }
 
 void remove_members(const char *archive_name, char **members, int num_members)
 {
-
+    return 0;
 }
 
 void list_content(const char *archive_name)
