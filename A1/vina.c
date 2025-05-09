@@ -9,12 +9,15 @@
 
 int load_directory(FILE *archive, EntradaVC **table, int *num_members)
 {
-    if (!archive || !table || !num_members) {
+    if (!archive || !table || !num_members)
+    {
         fprintf(stderr, "Erro: parâmetros inválidos em load_directory.\n");
         return -1;
     }
 
-    // Vai até o final para ler os metadados
+
+    // Vai até o final do arquivo menos os últimos 12 bytes (int + long)
+    // É aqui que estão salvos: [ qtd | offset ]
     fseek(archive, -((long)sizeof(int) + sizeof(long)), SEEK_END);
 
     // Lê o número de membros
@@ -30,18 +33,22 @@ int load_directory(FILE *archive, EntradaVC **table, int *num_members)
 
     // Aloca a tabela e lê os membros
     EntradaVC *tabela = malloc(qtd * sizeof(EntradaVC));
-    if (!tabela) {
+    if (!tabela)
+    {
         perror("Erro ao alocar memória para tabela");
         return -1;
     }
 
+    //Lê o diretorio inteiro, onde cada entrada representa um membro
     size_t lidos = fread(tabela, sizeof(EntradaVC), qtd, archive);
-    if (lidos != (size_t)qtd) {
+    if (lidos != (size_t)qtd)
+    {
         fprintf(stderr, "Erro ao ler tabela do diretório.\n");
         free(tabela);
         return -1;
     }
 
+    //retorna os dados pra quem chamou
     *table = tabela;
     *num_members = qtd;
     return 0;
@@ -50,31 +57,45 @@ int load_directory(FILE *archive, EntradaVC **table, int *num_members)
 
 int save_directory(FILE *archive, EntradaVC **table, int *num_membros)
 {
-    if (!archive || !table || !num_membros) {
+    if (!archive || !table || !num_membros)
+    {
         fprintf(stderr, "Erro: parâmetros inválidos em save_directory.\n");
         return -1;
     }
 
+    //move o cursor para o fim do arquivo
     fseek(archive, 0, SEEK_END);
+
+    //marca a posição atual do cursor
+    //byte onde começa o diretório
     long dir_offset = ftell(archive);
 
-    if (*num_membros > 0 && *table != NULL) {
+    //se há membros a salvar, grava a tabela no arquivo
+    if (*num_membros > 0 && *table != NULL)
+    {
         size_t written = fwrite(*table, sizeof(EntradaVC), *num_membros, archive);
-        if (written != (size_t)(*num_membros)) {
+        
+        //confere se deu certo a gravação
+        if (written != (size_t)(*num_membros))
+        {
             fprintf(stderr, "erro ao escrever a tabela de diretório.\n");
             return -1;
         }
     }
 
-    fwrite(num_membros, sizeof(int), 1, archive);
-    fwrite(&dir_offset, sizeof(long), 1, archive);
+    fwrite(num_membros, sizeof(int), 1, archive);//grava numero de membros
+    fwrite(&dir_offset, sizeof(long), 1, archive);//grava o offset do diretório
 
     return 0;
 }
 
-int encontrar_membro(EntradaVC *tabela, int num, const char *nome) {
-    for (int i = 0; i < num; i++) {
-        if (strcmp(tabela[i].nome, nome) == 0) {
+int encontrar_membro(EntradaVC *tabela, int num, const char *nome) 
+{
+    for (int i = 0; i < num; i++)
+    {
+        // Compara o nome do membro com o nome procurado e retorna o indice
+        if (strcmp(tabela[i].nome, nome) == 0)
+        {
             return i;
         }
     }
@@ -83,64 +104,78 @@ int encontrar_membro(EntradaVC *tabela, int num, const char *nome) {
 
 int insert_plan(const char *archive_name, char **members, int num_members)
 {
-    // 1. Abre ou cria o archive
+    //abre ou cria o archive
     FILE *archive = fopen(archive_name, "r+b");
     EntradaVC *tabela = NULL;
     int qtd = 0;
 
-    if (!archive) {
-        // Se o arquivo ainda não existe, criamos um novo vazio
+    if (!archive)
+    {
+        //se o arquivo ainda não existe, criamos um novo vazio
         archive = fopen(archive_name, "w+b");
-        if (!archive) {
+        if (!archive)
+        {
             perror("Erro ao abrir/ criar archive");
             return 1;
         }
-    } else {
-        // Se já existir, tenta carregar o diretório
+    } else
+    {
+        //se já existir, tenta carregar o diretório
         load_directory(archive, &tabela, &qtd);
-        // Trunca o final antigo (remoção do diretório anterior)
+
+        // Precisamos truncar (cortar) o final do arquivo, removendo o diretório antigo
+        // Isso evita ter duplicatas do diretório no fim
         fseek(archive, 0, SEEK_END);
         long final = ftell(archive);
+
+        // Subtrai o tamanho total do diretório atual (tabela + qtd + offset)
         final -= (qtd * sizeof(EntradaVC)) + sizeof(int) + sizeof(long);
         ftruncate(fileno(archive), final);
     }
 
     // 2. Para cada membro, insere no final do arquivo
-    for (int i = 0; i < num_members; i++) {
+    for (int i = 0; i < num_members; i++)
+    {
         const char *nome_membro = members[i];
 
+        //abre o arquivo original
         FILE *f = fopen(nome_membro, "rb");
-        if (!f) {
+        if (!f)
+        {
             perror("Erro ao abrir membro");
-            continue;
+            continue;//pula pro proximo
         }
 
+        //determina o tamanho do arquivo
         fseek(f, 0, SEEK_END);
         long size = ftell(f);
         rewind(f);
 
+        //aloca memoria para armazenar o conteudo
         unsigned char *buffer = malloc(size);
         fread(buffer, 1, size, f);
         fclose(f);
 
-        // Pega metadata do membro
+        //pega os metadados do membro
         struct stat s;
         stat(nome_membro, &s);
 
         // Vai até o fim do archive atual
         fseek(archive, 0, SEEK_END);
-        long offset = ftell(archive);
+        long offset = ftell(archive); //posicao onde o conteudo começa
         fwrite(buffer, 1, size, archive);
         free(buffer);
 
-        // Atualiza ou adiciona no diretório
+        // verifica se já existe o membro
         int idx = encontrar_membro(tabela, qtd, nome_membro);
-        if (idx == -1) {
-            // Novo membro
+        if (idx == -1)
+        {
+            // Novo membro, então precisamos alocar mais espaço
             tabela = realloc(tabela, (qtd + 1) * sizeof(EntradaVC));
             idx = qtd++;
         }
 
+        //preenche os dados do novo membro
         tabela[idx] = (EntradaVC){
             .uid = idx + 1,
             .tamanho_original = size,
@@ -150,6 +185,8 @@ int insert_plan(const char *archive_name, char **members, int num_members)
             .offset = offset,
             .is_compressed = 0
         };
+
+        // Copia o nome do membro
         strncpy(tabela[idx].nome, nome_membro, sizeof(tabela[idx].nome) - 1);
     }
 
@@ -161,42 +198,60 @@ int insert_plan(const char *archive_name, char **members, int num_members)
     return 0;
 }
 
-int insert_compressed(const char *archive_name, char **members, int num_members) {
+int insert_compressed(const char *archive_name, char **members, int num_members) 
+{
+
+    //abre o arquivo 
     FILE *archive = fopen(archive_name, "r+b");
     EntradaVC *tabela = NULL;
     int qtd = 0;
 
-    if (!archive) {
+    //se o arquivo não existe, cria um novo
+    if (!archive)
+    {
         archive = fopen(archive_name, "w+b");
-        if (!archive) {
+        if (!archive)
+        {
             perror("Erro ao abrir/criar archive");
             return 1;
         }
-    } else {
-        if (load_directory(archive, &tabela, &qtd) != 0) {
+    } else
+    {
+        //se existe carrega o diretório
+        if (load_directory(archive, &tabela, &qtd) != 0)
+        {
             tabela = NULL;
             qtd = 0;
         }
+
+        //corta o final do arquivo, removendo o diretório antigo
         fseek(archive, 0, SEEK_END);
         long final = ftell(archive);
         final -= (qtd * sizeof(EntradaVC)) + sizeof(int) + sizeof(long);
         ftruncate(fileno(archive), final);
     }
 
-    for (int i = 0; i < num_members; i++) {
+    // 2. Para cada membro, insere no final do arquivo
+    for (int i = 0; i < num_members; i++)
+    {
         const char *nome_membro = members[i];
 
+        //abre o arquivo original
         FILE *f = fopen(nome_membro, "rb");
-        if (!f) {
+        if (!f)
+        {
             fprintf(stderr, "Erro ao abrir membro %s. Pulando.\n", nome_membro);
             continue;
         }
 
+        //calcula o tamanho do arquivo
         fseek(f, 0, SEEK_END);
         long size_original_long = ftell(f);
         rewind(f);
 
-        if (size_original_long == 0) {
+        //se estiver vazio, pula
+        if (size_original_long == 0)
+        {
             fprintf(stderr, "Arquivo %s vazio. Pulando.\n", nome_membro);
             fclose(f);
             continue;
@@ -204,11 +259,37 @@ int insert_compressed(const char *archive_name, char **members, int num_members)
 
         unsigned int size_original = (unsigned int)size_original_long;
 
+        // Aloca buffers:
+        // - original: conteúdo do arquivo original
+        // - comprimido: buffer para armazenar os dados comprimidos
+        // - work: memória auxiliar usada pelo algoritmo de compressão
         unsigned char *buffer_original = malloc(size_original);
         unsigned char *buffer_comprimido = malloc(size_original * 2);
+
+        /*
+        * Aloca o work utilizado pelo LZ_CompressFast.
+        * 
+        * O algoritmo precisa de dois grandes vetores auxiliares:
+        * 
+        * 1. lastindex[65536] → Usado para armazenar a última posição conhecida de cada par de bytes 
+        *
+        * 2. jumptable[size_original] → Usado como uma tabela de saltos para otimizar a compressão,
+        *
+        * Para economizar chamadas de malloc e garantir que os dois vetores fiquem em um mesmo bloco de memória,
+        * o autor do algoritmo reserva tudo de uma vez só:
+        * 
+        *     total = 65536 + size_original
+        *
+        * Isso garante espaço suficiente para:
+        * - work[0 ... 65535]       → será usado como lastindex[]
+        * - work[65536 ... N]       → será usado como jumptable[]
+        * 
+        * em resumo, alocando o tamanho total de 65536 + size_original de elementos do tipo unsigned int.
+        */
         unsigned int *work = malloc((65536 + size_original) * sizeof(unsigned int));
 
-        if (!buffer_original || !buffer_comprimido || !work) {
+        if (!buffer_original || !buffer_comprimido || !work)
+        {
             fprintf(stderr, "Erro de memória para arquivo %s.\n", nome_membro);
             if (buffer_original) free(buffer_original);
             if (buffer_comprimido) free(buffer_comprimido);
@@ -218,12 +299,15 @@ int insert_compressed(const char *archive_name, char **members, int num_members)
             return 1;
         }
 
+        //le o arquivo original
         fread(buffer_original, 1, size_original, f);
         fclose(f);
-
+        
+        // Comprime o buffer original
         int tamanho_comprimido = LZ_CompressFast(buffer_original, buffer_comprimido, size_original, work);
-        free(work); // Área de trabalho não é mais necessária
+        free(work);
 
+        //prepara os dados para salvar
         fseek(archive, 0, SEEK_END);
         long offset = ftell(archive);
 
@@ -231,25 +315,33 @@ int insert_compressed(const char *archive_name, char **members, int num_members)
         strncpy(entrada.nome, nome_membro, sizeof(entrada.nome) - 1);
         entrada.nome[sizeof(entrada.nome) - 1] = '\0';
         entrada.uid = qtd + 1;
+
         struct stat s;
-        if (stat(nome_membro, &s) != 0) {
+        if (stat(nome_membro, &s) != 0)
+        {
             perror("Erro no stat");
             free(buffer_original);
             free(buffer_comprimido);
             fclose(archive);
             return 1;
         }
+
         entrada.data_modificacao = s.st_mtime;
         entrada.ordem = qtd;
         entrada.offset = offset;
 
-        if (tamanho_comprimido > 0 && tamanho_comprimido < (int)size_original) {
+        // Verifica se a compressão foi eficaz
+        if (tamanho_comprimido > 0 && tamanho_comprimido < (int)size_original)
+        {
+            //grava a versão comprimida
             fwrite(buffer_comprimido, 1, tamanho_comprimido, archive);
             entrada.is_compressed = 1;
             entrada.tamanho_original = size_original;
             entrada.tamanho_em_disco = tamanho_comprimido;
             printf("Arquivo %s armazenado comprimido (%d bytes).\n", nome_membro, tamanho_comprimido);
-        } else {
+        } else
+        {
+            //grava a versão original
             fwrite(buffer_original, 1, size_original, archive);
             entrada.is_compressed = 0;
             entrada.tamanho_original = size_original;
@@ -261,7 +353,8 @@ int insert_compressed(const char *archive_name, char **members, int num_members)
         free(buffer_comprimido);
 
         tabela = realloc(tabela, (qtd + 1) * sizeof(EntradaVC));
-        if (!tabela) {
+        if (!tabela)
+        {
             fprintf(stderr, "Erro de memória ao expandir tabela.\n");
             fclose(archive);
             return 1;
@@ -276,9 +369,12 @@ int insert_compressed(const char *archive_name, char **members, int num_members)
 
     return 0;
 }
-void move_member(const char *archive_name, const char *destino, const char *alvo) {
+
+void move_member(const char *archive_name, const char *destino, const char *alvo) 
+{
     FILE *archive = fopen(archive_name, "rb");
-    if (!archive) {
+    if (!archive)
+    {
         perror("Erro ao abrir arquivador para mover");
         return;
     }
@@ -286,7 +382,8 @@ void move_member(const char *archive_name, const char *destino, const char *alvo
     EntradaVC *tabela = NULL;
     int qtd = 0;
 
-    if (load_directory(archive, &tabela, &qtd) != 0) {
+    if (load_directory(archive, &tabela, &qtd) != 0)
+    {
         fprintf(stderr, "Erro ao carregar diretório.\n");
         fclose(archive);
         return;
@@ -295,7 +392,8 @@ void move_member(const char *archive_name, const char *destino, const char *alvo
     int idx_destino = encontrar_membro(tabela, qtd, destino);
     int idx_alvo = encontrar_membro(tabela, qtd, alvo);
 
-    if (idx_destino == -1 || idx_alvo == -1) {
+    if (idx_destino == -1 || idx_alvo == -1)
+    {
         fprintf(stderr, "Membro não encontrado: %s ou %s\n", destino, alvo);
         free(tabela);
         fclose(archive);
@@ -306,7 +404,8 @@ void move_member(const char *archive_name, const char *destino, const char *alvo
     EntradaVC movido = tabela[idx_alvo];
 
     // Remove o alvo da tabela
-    for (int i = idx_alvo; i < qtd - 1; i++) {
+    for (int i = idx_alvo; i < qtd - 1; i++)
+    {
         tabela[i] = tabela[i + 1];
     }
     qtd--;
@@ -314,17 +413,21 @@ void move_member(const char *archive_name, const char *destino, const char *alvo
     // Reinsere o alvo antes do destino
     EntradaVC *nova_tabela = malloc((qtd + 1) * sizeof(EntradaVC));
     int j = 0;
-    for (int i = 0; i < qtd + 1; i++) {
-        if (i == idx_destino) {
+    for (int i = 0; i < qtd + 1; i++)
+    {
+        if (i == idx_destino)
+        {
             nova_tabela[i] = movido;
-        } else {
+        } else
+        {
             nova_tabela[i] = tabela[j++];
         }
     }
 
-    // Atualiza campo .ordem e copia os dados reais
+    //abre um novo arquivo temporario para recriar o .vc na ordem atualizada
     FILE *novo = fopen("temp.vc", "w+b");
-    if (!novo) {
+    if (!novo)
+    {
         perror("Erro ao criar novo arquivo");
         free(nova_tabela);
         free(tabela);
@@ -332,7 +435,9 @@ void move_member(const char *archive_name, const char *destino, const char *alvo
         return;
     }
 
-    for (int i = 0; i < qtd + 1; i++) {
+    //regrava tudo no novo arquivo
+    for (int i = 0; i < qtd + 1; i++)
+    {
         EntradaVC entrada = nova_tabela[i];
         entrada.ordem = i;
 
@@ -361,9 +466,11 @@ void move_member(const char *archive_name, const char *destino, const char *alvo
     printf("Membro '%s' movido antes de '%s' com sucesso.\n", alvo, destino);
 }
 
-void extract(const char *archive_name, char **members, int num_members) {
+void extract(const char *archive_name, char **members, int num_members) 
+{
     FILE *archive = fopen(archive_name, "rb");
-    if (!archive) {
+    if (!archive)
+    {
         perror("Erro ao abrir arquivador para extração");
         return;
     }
@@ -371,17 +478,21 @@ void extract(const char *archive_name, char **members, int num_members) {
     EntradaVC *tabela = NULL;
     int qtd = 0;
 
-    if (load_directory(archive, &tabela, &qtd) != 0) {
+    if (load_directory(archive, &tabela, &qtd) != 0)
+    {
         fprintf(stderr, "Erro ao carregar diretório.\n");
         fclose(archive);
         return;
     }
 
-    for (int i = 0; i < num_members; i++) {
+    //procura o membro a ser extraído
+    for (int i = 0; i < num_members; i++)
+    {
         const char *nome = members[i];
         int idx = encontrar_membro(tabela, qtd, nome);
 
-        if (idx == -1) {
+        if (idx == -1)
+        {
             fprintf(stderr, "Arquivo '%s' não encontrado no arquivador.\n", nome);
             continue;
         }
@@ -390,26 +501,31 @@ void extract(const char *archive_name, char **members, int num_members) {
 
         // Lê os dados do arquivo no .vc
         unsigned char *buffer = malloc(entrada.tamanho_em_disco);
-        if (!buffer) {
+        if (!buffer)
+        {
             fprintf(stderr, "Erro de memória para %s.\n", nome);
             continue;
         }
 
+        //vai ate a posição do conteudo e le os dados
         fseek(archive, entrada.offset, SEEK_SET);
         fread(buffer, 1, entrada.tamanho_em_disco, archive);
 
         // Cria o arquivo extraído no diretório atual
         FILE *out = fopen(entrada.nome, "wb");
-        if (!out) {
+        if (!out)
+        {
             perror("Erro ao criar arquivo extraído");
             free(buffer);
             continue;
         }
 
-        if (entrada.is_compressed) {
+        if (entrada.is_compressed)
+        {
             // Descomprime usando LZ_Uncompress
             unsigned char *descomprimido = malloc(entrada.tamanho_original);
-            if (!descomprimido) {
+            if (!descomprimido)
+            {
                 fprintf(stderr, "Erro de memória ao descomprimir %s.\n", nome);
                 fclose(out);
                 free(buffer);
@@ -419,7 +535,8 @@ void extract(const char *archive_name, char **members, int num_members) {
             LZ_Uncompress(buffer, descomprimido, entrada.tamanho_em_disco);
             fwrite(descomprimido, 1, entrada.tamanho_original, out);
             free(descomprimido);
-        } else {
+        } else
+        {
             fwrite(buffer, 1, entrada.tamanho_em_disco, out);
         }
 
@@ -432,9 +549,11 @@ void extract(const char *archive_name, char **members, int num_members) {
     free(tabela);
 }
 
-void remove_members(const char *archive_name, char **members, int num_members) {
+void remove_members(const char *archive_name, char **members, int num_members) 
+{
     FILE *archive = fopen(archive_name, "rb");
-    if (!archive) {
+    if (!archive)
+    {
         perror("Erro ao abrir arquivador para remoção");
         return;
     }
@@ -442,7 +561,8 @@ void remove_members(const char *archive_name, char **members, int num_members) {
     EntradaVC *tabela = NULL;
     int qtd = 0;
 
-    if (load_directory(archive, &tabela, &qtd) != 0) {
+    if (load_directory(archive, &tabela, &qtd) != 0)
+    {
         fprintf(stderr, "Erro ao carregar diretório.\n");
         fclose(archive);
         return;
@@ -450,10 +570,13 @@ void remove_members(const char *archive_name, char **members, int num_members) {
 
     // Marca quais arquivos devem ser mantidos
     int *manter = calloc(qtd, sizeof(int));
-    for (int i = 0; i < qtd; i++) {
+    for (int i = 0; i < qtd; i++)
+    {
         manter[i] = 1; // manter por padrão
-        for (int j = 0; j < num_members; j++) {
-            if (strcmp(tabela[i].nome, members[j]) == 0) {
+        for (int j = 0; j < num_members; j++)
+        {
+            if (strcmp(tabela[i].nome, members[j]) == 0)
+            {
                 manter[i] = 0; // marcar para remoção
                 break;
             }
@@ -462,7 +585,8 @@ void remove_members(const char *archive_name, char **members, int num_members) {
 
     // Cria novo arquivo temporário
     FILE *novo = fopen("temp.vc", "w+b");
-    if (!novo) {
+    if (!novo)
+    {
         perror("Erro ao criar arquivo temporário");
         fclose(archive);
         free(tabela);
@@ -473,7 +597,8 @@ void remove_members(const char *archive_name, char **members, int num_members) {
     EntradaVC *nova_tabela = NULL;
     int nova_qtd = 0;
 
-    for (int i = 0; i < qtd; i++) {
+    for (int i = 0; i < qtd; i++)
+    {
         if (!manter[i]) continue;
 
         EntradaVC entrada = tabela[i];
@@ -510,7 +635,8 @@ void remove_members(const char *archive_name, char **members, int num_members) {
 void list_content(const char *archive_name)
 {
     FILE *archive = fopen(archive_name, "rb");
-    if (!archive) {
+    if (!archive)
+    {
         perror("Erro ao abrir o archive para listar conteúdo");
         return;
     }
@@ -518,7 +644,8 @@ void list_content(const char *archive_name)
     EntradaVC *tabela = NULL;
     int qtd = 0;
 
-    if (load_directory(archive, &tabela, &qtd) != 0) {
+    if (load_directory(archive, &tabela, &qtd) != 0)
+    {
         fprintf(stderr, "Erro ao carregar diretório.\n");
         fclose(archive);
         return;
@@ -526,7 +653,8 @@ void list_content(const char *archive_name)
 
     printf("Conteúdo do archive '%s':\n", archive_name);
     printf("--------------------------------------------------\n");
-    for (int i = 0; i < qtd; i++) {
+    for (int i = 0; i < qtd; i++)
+    {
         printf("Membro %d:\n", i + 1);
         printf(" Nome: %s\n", tabela[i].nome);
         printf(" UID: %d\n", tabela[i].uid);
