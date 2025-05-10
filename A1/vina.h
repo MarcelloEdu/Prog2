@@ -33,7 +33,7 @@ int insert_compressed(const char *archive_name, char **members, int num_members)
 void move_member(const char *archive_name, const char *target, const char *member_to_move);
 
 // Extrai os arquivos indicados (ou todos se members == NULL)
-void extract(const char *archive_name, char **members, int num_members);
+int extract(const char *archive_name, char **members, int num_members);
 
 // Remove os membros indicados do archive (ajusta diretório)
 void remove_members(const char *archive_name, char **members, int num_members);
