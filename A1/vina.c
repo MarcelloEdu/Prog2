@@ -352,29 +352,52 @@ int insert_compressed(const char *archive_name, char **members, int num_members)
         free(buffer_original);
         free(buffer_comprimido);
 
-        tabela = realloc(tabela, (qtd + 1) * sizeof(EntradaVC));
-        if (!tabela)
-        {
-            fprintf(stderr, "Erro de memória ao expandir tabela.\n");
-            fclose(archive);
-            return 1;
-        }
-        tabela[qtd++] = entrada;
+        int idx = encontrar_membro(tabela, qtd, nome_membro);
+        if (idx != -1) {
+            // Já existe — verificar se está comprimido
+            if (tabela[idx].is_compressed) {
+                printf("Membro '%s' já existe no diretório (comprimido). Substituindo...\n", nome_membro);
+                tabela[idx] = entrada;
+            } else {
+                char resposta[4];
+                printf("Membro '%s' já existe no diretório em modo plano. Substituir por versão comprimida? (s/N): ", nome_membro);
+                fgets(resposta, sizeof(resposta), stdin);
+                if (resposta[0] != 's' && resposta[0] != 'S') {
+                    printf("Substituição cancelada para '%s'.\n", nome_membro);
+                    continue;
+                }
+                tabela[idx] = entrada;
+            }
+        } else {
+            // Membro novo
+            tabela = realloc(tabela, (qtd + 1) * sizeof(EntradaVC));
+            if (!tabela) {
+                fprintf(stderr, "Erro de memória ao expandir tabela.\n");
+                fclose(archive);
+                return 1;
+            }
+        tabela[qtd] = entrada;
+        qtd++;
     }
-
-    // Agora sim: salvar o diretório de uma vez só
+    //salvar o diretório de uma vez só
     save_directory(archive, &tabela, &qtd);
     fclose(archive);
     free(tabela);
 
     return 0;
+    }
+    return 0;
 }
 
 void move_member(const char *archive_name, const char *destino, const char *alvo) 
 {
+    if (!alvo) {
+        fprintf(stderr, "Erro: membro a mover não pode ser NULL.\n");
+        return;
+    }
+
     FILE *archive = fopen(archive_name, "rb");
-    if (!archive)
-    {
+    if (!archive) {
         perror("Erro ao abrir arquivador para mover");
         return;
     }
@@ -382,62 +405,64 @@ void move_member(const char *archive_name, const char *destino, const char *alvo
     EntradaVC *tabela = NULL;
     int qtd = 0;
 
-    if (load_directory(archive, &tabela, &qtd) != 0)
-    {
+    if (load_directory(archive, &tabela, &qtd) != 0) {
         fprintf(stderr, "Erro ao carregar diretório.\n");
         fclose(archive);
         return;
     }
 
-    int idx_destino = encontrar_membro(tabela, qtd, destino);
     int idx_alvo = encontrar_membro(tabela, qtd, alvo);
-
-    if (idx_destino == -1 || idx_alvo == -1)
-    {
-        fprintf(stderr, "Membro não encontrado: %s ou %s\n", destino, alvo);
+    if (idx_alvo == -1) {
+        fprintf(stderr, "Membro '%s' não encontrado.\n", alvo);
         free(tabela);
         fclose(archive);
         return;
     }
 
-    // Extrai o membro alvo
-    EntradaVC movido = tabela[idx_alvo];
+    // Se destino for NULL, vamos mover para o início (posição 0)
+    int idx_destino = 0;
+    if (destino != NULL) {
+        idx_destino = encontrar_membro(tabela, qtd, destino);
+        if (idx_destino == -1) {
+            fprintf(stderr, "Destino '%s' não encontrado.\n", destino);
+            free(tabela);
+            fclose(archive);
+            return;
+        }
 
-    // Remove o alvo da tabela
-    for (int i = idx_alvo; i < qtd - 1; i++)
-    {
-        tabela[i] = tabela[i + 1];
-    }
-    qtd--;
-
-    // Reinsere o alvo antes do destino
-    EntradaVC *nova_tabela = malloc((qtd + 1) * sizeof(EntradaVC));
-    int j = 0;
-    for (int i = 0; i < qtd + 1; i++)
-    {
-        if (i == idx_destino)
-        {
-            nova_tabela[i] = movido;
-        } else
-        {
-            nova_tabela[i] = tabela[j++];
+        // Se o alvo está antes do destino, após removê-lo, o índice do destino muda
+        if (idx_alvo < idx_destino) {
+            idx_destino--;
         }
     }
 
-    //abre um novo arquivo temporario para recriar o .vc na ordem atualizada
+    EntradaVC movido = tabela[idx_alvo];
+
+    // Cria nova tabela e move membro para a posição correta
+    EntradaVC *nova_tabela = malloc(qtd * sizeof(EntradaVC));
+    int j = 0;
+
+    for (int i = 0; i < qtd; i++) {
+        if (i == idx_destino) {
+            nova_tabela[j++] = movido; // insere o movido na posição certa
+        }
+
+        if (i != idx_alvo) {
+            nova_tabela[j++] = tabela[i]; // copia os outros membros (exceto o movido)
+        }
+    }
+
     FILE *novo = fopen("temp.vc", "w+b");
-    if (!novo)
-    {
-        perror("Erro ao criar novo arquivo");
+    if (!novo) {
+        perror("Erro ao criar novo arquivo temporário");
         free(nova_tabela);
         free(tabela);
         fclose(archive);
         return;
     }
 
-    //regrava tudo no novo arquivo
-    for (int i = 0; i < qtd + 1; i++)
-    {
+    // Regrava dados dos membros e atualiza offsets e ordem
+    for (int i = 0; i < qtd; i++) {
         EntradaVC entrada = nova_tabela[i];
         entrada.ordem = i;
 
@@ -454,7 +479,7 @@ void move_member(const char *archive_name, const char *destino, const char *alvo
         nova_tabela[i] = entrada;
     }
 
-    save_directory(novo, &nova_tabela, &(int){qtd + 1});
+    save_directory(novo, &nova_tabela, &qtd);
     fclose(novo);
     fclose(archive);
     free(tabela);
@@ -463,16 +488,16 @@ void move_member(const char *archive_name, const char *destino, const char *alvo
     remove(archive_name);
     rename("temp.vc", archive_name);
 
-    printf("Membro '%s' movido antes de '%s' com sucesso.\n", alvo, destino);
+    printf("Membro '%s' movido com sucesso.\n", alvo);
 }
 
-void extract(const char *archive_name, char **members, int num_members) 
+int extract(const char *archive_name, char **members, int num_members) 
 {
     FILE *archive = fopen(archive_name, "rb");
     if (!archive)
     {
         perror("Erro ao abrir arquivador para extração");
-        return;
+        return 1;
     }
 
     EntradaVC *tabela = NULL;
@@ -482,7 +507,7 @@ void extract(const char *archive_name, char **members, int num_members)
     {
         fprintf(stderr, "Erro ao carregar diretório.\n");
         fclose(archive);
-        return;
+        return 1;
     }
 
     //procura o membro a ser extraído
@@ -547,6 +572,7 @@ void extract(const char *archive_name, char **members, int num_members)
 
     fclose(archive);
     free(tabela);
+    return 0;
 }
 
 void remove_members(const char *archive_name, char **members, int num_members) 
@@ -655,12 +681,16 @@ void list_content(const char *archive_name)
     printf("--------------------------------------------------\n");
     for (int i = 0; i < qtd; i++)
     {
+        char data_str[64];
+        struct tm *tm_info = localtime(&tabela[i].data_modificacao);
+        strftime(data_str, sizeof(data_str), "%Y-%m-%d %H:%M:%S", tm_info);
+
         printf("Membro %d:\n", i + 1);
         printf(" Nome: %s\n", tabela[i].nome);
         printf(" UID: %d\n", tabela[i].uid);
         printf(" Tamanho original: %d bytes\n", tabela[i].tamanho_original);
         printf(" Tamanho em disco: %d bytes\n", tabela[i].tamanho_em_disco);
-        printf(" Data de modificação: %ld\n", tabela[i].data_modificacao); // depois podemos formatar essa data
+        printf(" Data de modificação: %s\n", data_str); // depois podemos formatar essa data
         printf(" Ordem: %d\n", tabela[i].ordem);
         printf(" Offset: %ld\n", tabela[i].offset);
         printf(" Comprimido: %s\n", tabela[i].is_compressed ? "Sim" : "Não");
