@@ -58,12 +58,21 @@ int main(int argc, char *argv[]) {
 
     // -m: mover membro
     if (strcmp(opcao, "-m") == 0) {
-        if (argc != 5) {
-            fprintf(stderr, "Uso correto: vinac -m <archive> <target> <membro_a_mover>\n");
-            return 1;
-        }
-        move_member(archive_name, argv[3], argv[4]);
-        return 0;
+       if (argc == 5) {
+           // Forma normal: -m <archive> <target> <alvo>
+           const char *target = (strcmp(argv[3], "NULL") == 0) ? NULL : argv[3];
+           move_member(archive_name, target, argv[4]);
+           return 0;
+       } else if (argc == 4) {
+           // Forma alternativa: -m <archive> <alvo> (mover para o início)
+           move_member(archive_name, NULL, argv[3]);
+           return 0;
+       } else {
+           fprintf(stderr, "Uso correto:\n");
+           fprintf(stderr, "  vinac -m <archive> <target> <membro_a_mover>\n");
+           fprintf(stderr, "  vinac -m <archive> <membro_a_mover>            (para mover ao início)\n");
+           return 1;
+       }
     }
 
     // Opção inválida
