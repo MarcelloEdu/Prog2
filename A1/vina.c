@@ -690,8 +690,8 @@ void list_content(const char *archive_name)
         printf(" UID: %d\n", tabela[i].uid);
         printf(" Tamanho original: %d bytes\n", tabela[i].tamanho_original);
         printf(" Tamanho em disco: %d bytes\n", tabela[i].tamanho_em_disco);
-        printf(" Data de modificação: %s\n", data_str); // depois podemos formatar essa data
-        printf(" Ordem: %d\n", tabela[i].ordem);
+        printf(" Data de modificação: %s\n", data_str);
+        //printf(" Ordem: %d\n", tabela[i].ordem);
         printf(" Offset: %ld\n", tabela[i].offset);
         printf(" Comprimido: %s\n", tabela[i].is_compressed ? "Sim" : "Não");
         printf("--------------------------------------------------\n");
