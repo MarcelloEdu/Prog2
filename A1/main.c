@@ -10,7 +10,18 @@ int main(int argc, char *argv[]) {
     }
 
     const char *opcao = argv[1];
-    const char *archive_name = argv[2];
+
+    //copia o nome do arquivo e garante a extensão .vc
+    char nome_completo[1024];
+    strncpy(nome_completo, argv[2], sizeof(nome_completo) - 1);
+    nome_completo[sizeof(nome_completo) - 1] = '\0';
+
+    if (strlen(nome_completo) < 3 || strcmp(nome_completo + strlen(nome_completo) - 3, ".vc") != 0) {
+        strncat(nome_completo, ".vc", sizeof(nome_completo) - strlen(nome_completo) - 1);
+    }
+
+    const char *archive_name = nome_completo;
+
 
     // -ip: inserir plano
     if (strcmp(opcao, "-ip") == 0) {
@@ -75,7 +86,7 @@ int main(int argc, char *argv[]) {
        }
     }
 
-    // Opção inválida
+    //opção inválida
     fprintf(stderr, "Erro: opção desconhecida '%s'\n", opcao);
     return 1;
 }
