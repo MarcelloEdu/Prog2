@@ -1,7 +1,7 @@
 #!/bin/bash
 
 VC="./vina"
-VCFILE="teste_final.vc"
+VCFILE="teste_final"
 
 clear
 echo "==== TESTE VINAc ===="
